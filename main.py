@@ -46,7 +46,7 @@ bot = commands.Bot(
     help_command=None,
 )
 
-api = FastAPI(title="Cloudverse Bot Internal API")
+app = FastAPI(title="Cloudverse Bot Internal API")
 
 
 # =========================================================
@@ -406,12 +406,12 @@ class AfterCloseView(discord.ui.View):
 # WEBSITE -> BOT API
 # =========================================================
 
-@api.get("/")
+@app.get("/")
 async def api_home():
     return {"ok": True, "service": "Cloudverse Discord Bot API"}
 
 
-@api.post("/website/order-ticket")
+@app.post("/website/order-ticket")
 async def website_order_ticket(
     order: WebsiteOrder,
     x_bot_api_secret: str | None = Header(default=None),
