@@ -117,6 +117,28 @@ async def get_member(guild: discord.Guild, discord_id: str) -> discord.Member:
         raise HTTPException(status_code=404, detail="Discord member not found in the server.") from exc
 
 
+async def find_member_by_text(guild: discord.Guild, value: str) -> discord.Member | None:
+    cleaned = value.strip()
+    match = re.search(r"\d{15,25}", cleaned)
+    if match:
+        member_id = int(match.group(0))
+        try:
+            return guild.get_member(member_id) or await guild.fetch_member(member_id)
+        except Exception:
+            return None
+
+    lowered = cleaned.lower().lstrip("@")
+    for member in guild.members:
+        names = {
+            member.name.lower(),
+            member.display_name.lower(),
+            str(member).lower(),
+        }
+        if lowered in names:
+            return member
+    return None
+
+
 def product_lines(products: list[dict[str, Any]]) -> str:
     if not products:
         return "No products found."
@@ -147,8 +169,10 @@ async def edit_ticket_status_message(
     interaction: discord.Interaction,
     status: str,
     extra_fields: dict[str, str] | None = None,
+    message: discord.Message | None = None,
+    view: discord.ui.View | None = None,
 ) -> None:
-    message = interaction.message
+    message = message or interaction.message
     if not message or not message.embeds:
         return
 
@@ -158,7 +182,10 @@ async def edit_ticket_status_message(
         for name, value in extra_fields.items():
             set_embed_field(embed, name, value, inline=True)
 
-    await message.edit(embed=embed, view=TicketStaffView())
+    if view is None:
+        await message.edit(embed=embed)
+    else:
+        await message.edit(embed=embed, view=view)
 
 
 async def send_purchase_log(embed: discord.Embed) -> None:
@@ -209,6 +236,7 @@ async def create_ticket_channel(
     user: discord.Member,
     reason: str,
     order_data: WebsiteOrder | None = None,
+    form_data: dict[str, str] | None = None,
 ) -> discord.TextChannel:
     category = guild.get_channel(TICKET_CATEGORY_ID)
     if category is not None and not isinstance(category, discord.CategoryChannel):
@@ -254,6 +282,9 @@ async def create_ticket_channel(
         )
         embed.add_field(name="Reason", value=reason, inline=False)
         embed.add_field(name="Status", value="Pending", inline=True)
+        if form_data:
+            for name, value in form_data.items():
+                embed.add_field(name=name, value=value or "Not provided", inline=False)
         embed.set_footer(text="Staff: claim the ticket, then use Staff Tools.")
 
     embed.set_thumbnail(url=CLOUDVERSE_THUMBNAIL_URL)
@@ -270,6 +301,7 @@ async def create_ticket_channel(
         "claimed_by_name": None,
         "status": "Pending",
         "order_data": order_data.model_dump() if order_data else None,
+        "form_data": form_data or {},
         "original_name": channel.name,
     }
 
@@ -280,15 +312,111 @@ async def create_ticket_channel(
 # NORMAL TICKET PANEL
 # =========================================================
 
+class TicketFormModal(discord.ui.Modal):
+    def __init__(self, reason: str):
+        super().__init__(title=reason)
+        self.reason = reason
+
+        self.ign = None
+        self.target = None
+        self.issue = None
+
+        if reason != "Other":
+            self.ign = discord.ui.InputText(
+                label="What is your In-Game-Name?",
+                placeholder="Your Minecraft IGN",
+                max_length=32,
+            )
+            self.add_item(self.ign)
+
+        if reason == "General Support":
+            self.issue = discord.ui.InputText(
+                label="What do you need help with in-game?",
+                placeholder="Describe your issue clearly.",
+                style=discord.InputTextStyle.long,
+                max_length=1000,
+            )
+        elif reason == "Billing Support":
+            self.issue = discord.ui.InputText(
+                label="What rank or item did you not receive?",
+                placeholder="Tell us what you bought and what went wrong.",
+                style=discord.InputTextStyle.long,
+                max_length=1000,
+            )
+        elif reason == "Punishment Appeal":
+            self.issue = discord.ui.InputText(
+                label="Why should we consider your appeal?",
+                placeholder="Explain your appeal clearly.",
+                style=discord.InputTextStyle.long,
+                max_length=1000,
+            )
+        elif reason == "Player Reports":
+            self.target = discord.ui.InputText(
+                label="Whom do you want to report? (IGN)",
+                placeholder="Player IGN",
+                max_length=32,
+            )
+            self.add_item(self.target)
+            self.issue = discord.ui.InputText(
+                label="Why do you want to report that player?",
+                placeholder="Describe your issue clearly.",
+                style=discord.InputTextStyle.long,
+                max_length=1000,
+            )
+        elif reason == "Bug Report":
+            self.issue = discord.ui.InputText(
+                label="Describe the bug and where it occurred.",
+                placeholder="Describe your issue clearly.",
+                style=discord.InputTextStyle.long,
+                max_length=1000,
+            )
+        elif reason == "Staff Report":
+            self.issue = discord.ui.InputText(
+                label="Mention staff and reason for complaint.",
+                placeholder="Describe your issue clearly.",
+                style=discord.InputTextStyle.long,
+                max_length=1000,
+            )
+        else:
+            self.issue = discord.ui.InputText(
+                label="Briefly explain your issue.",
+                placeholder="Describe your issue clearly.",
+                style=discord.InputTextStyle.long,
+                max_length=1000,
+            )
+
+        self.add_item(self.issue)
+
+    async def callback(self, interaction: discord.Interaction):
+        form_data = {}
+        if self.ign:
+            form_data["Minecraft IGN"] = self.ign.value
+        if self.target:
+            form_data["Reported Player"] = self.target.value
+        if self.issue:
+            form_data["Issue"] = self.issue.value
+
+        channel = await create_ticket_channel(
+            guild=interaction.guild,
+            user=interaction.user,
+            reason=self.reason,
+            form_data=form_data,
+        )
+        await interaction.response.send_message(
+            f"Your Cloudverse ticket has been created: {channel.mention}",
+            ephemeral=True,
+        )
+
+
 class TicketReasonSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="General Support", description="General server or store help"),
-            discord.SelectOption(label="Refund Related", description="Help with refund questions"),
-            discord.SelectOption(label="Report a Bug", description="Report a website, bot or server bug"),
-            discord.SelectOption(label="Billing Support", description="Payment or purchase support"),
+            discord.SelectOption(label="General Support", description="General Cloudverse server help"),
+            discord.SelectOption(label="Billing Support", description="Purchase, rank, key or coins support"),
             discord.SelectOption(label="Punishment Appeal", description="Appeal a mute, kick or ban"),
-            discord.SelectOption(label="Player Reports", description="Report a player"),
+            discord.SelectOption(label="Player Reports", description="Report a Cloudverse player"),
+            discord.SelectOption(label="Bug Report", description="Report a website, bot or server bug"),
+            discord.SelectOption(label="Staff Report", description="Report a staff-related issue"),
             discord.SelectOption(label="Other", description="Anything else"),
         ]
 
@@ -301,16 +429,7 @@ class TicketReasonSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        channel = await create_ticket_channel(
-            guild=interaction.guild,
-            user=interaction.user,
-            reason=self.values[0],
-        )
-
-        await interaction.response.send_message(
-            f"Your ticket has been created: {channel.mention}",
-            ephemeral=True,
-        )
+        await interaction.response.send_modal(TicketFormModal(self.values[0]))
 
 
 class TicketPanelView(discord.ui.View):
@@ -337,11 +456,11 @@ async def sendpanel(ctx: discord.ApplicationContext):
         name="Ticket Reasons",
         value=(
             "- General Support\n"
-            "- Refund Related\n"
-            "- Report a Bug\n"
             "- Billing Support\n"
             "- Punishment Appeal\n"
             "- Player Reports\n"
+            "- Bug Report\n"
+            "- Staff Report\n"
             "- Other"
         ),
         inline=False,
@@ -398,7 +517,7 @@ class PurchaseConfirmModal(discord.ui.Modal):
             ticket_embed = self.source_message.embeds[0]
             set_embed_field(ticket_embed, "Status", "Confirmed", inline=True)
             set_embed_field(ticket_embed, "Confirmed By", interaction.user.mention, inline=True)
-            await self.source_message.edit(embed=ticket_embed, view=TicketStaffView())
+            await self.source_message.edit(embed=ticket_embed)
             ticket_claims.setdefault(self.source_message.id, {})["status"] = "Confirmed"
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
@@ -439,7 +558,7 @@ class UserPermissionModal(discord.ui.Modal):
     def __init__(self, mode: str):
         super().__init__(title="Add User" if mode == "add" else "Remove User")
         self.mode = mode
-        self.user_value = discord.ui.InputText(label="User ID or Mention", placeholder="123456789012345678")
+        self.user_value = discord.ui.InputText(label="Username, Display Name, ID or Mention", placeholder="PlayerName")
         self.add_item(self.user_value)
 
     async def callback(self, interaction: discord.Interaction):
@@ -447,16 +566,9 @@ class UserPermissionModal(discord.ui.Modal):
             await interaction.response.send_message("Only staff can manage ticket users.", ephemeral=True)
             return
 
-        raw = str(self.user_value.value)
-        match = re.search(r"\d{15,25}", raw)
-        if not match:
-            await interaction.response.send_message("Please provide a valid Discord user ID or mention.", ephemeral=True)
-            return
-
-        try:
-            member = interaction.guild.get_member(int(match.group(0))) or await interaction.guild.fetch_member(int(match.group(0)))
-        except Exception:
-            await interaction.response.send_message("That user is not in this server.", ephemeral=True)
+        member = await find_member_by_text(interaction.guild, str(self.user_value.value))
+        if not member:
+            await interaction.response.send_message("I could not find that user in this server.", ephemeral=True)
             return
 
         if self.mode == "add":
@@ -506,17 +618,27 @@ async def close_ticket(interaction: discord.Interaction, reason: str, source_mes
     await interaction.response.send_message(embed=embed, view=ClosedTicketView())
 
 
-async def reopen_ticket(interaction: discord.Interaction) -> None:
+async def reopen_ticket(interaction: discord.Interaction, source_message: discord.Message | None = None) -> None:
     current_name = interaction.channel.name
     if current_name.startswith("closed-"):
         await interaction.channel.edit(name=clean_channel_name(current_name.removeprefix("closed-")))
     await unlock_ticket_channel(interaction.channel)
-    await edit_ticket_status_message(interaction, "Claimed" if ticket_claims.get(interaction.message.id, {}).get("claimed_by_id") else "Pending")
+    message = source_message or interaction.message
+    await edit_ticket_status_message(
+        interaction,
+        "Claimed" if ticket_claims.get(message.id, {}).get("claimed_by_id") else "Pending",
+        message=message,
+        view=TicketStaffView(
+            order_data=ticket_claims.get(message.id, {}).get("order_data"),
+            claimed=bool(ticket_claims.get(message.id, {}).get("claimed_by_id")),
+        ),
+    )
     await interaction.response.send_message("Ticket reopened.", ephemeral=True)
 
 
 class StaffToolsSelect(discord.ui.Select):
-    def __init__(self):
+    def __init__(self, source_message: discord.Message):
+        self.source_message = source_message
         options = [
             discord.SelectOption(label="Confirm Purchase", value="confirm_purchase"),
             discord.SelectOption(label="Not Bought", value="not_bought"),
@@ -541,11 +663,11 @@ class StaffToolsSelect(discord.ui.Select):
             return
 
         action = self.values[0]
-        state = ticket_claims.setdefault(interaction.message.id, {})
+        state = ticket_claims.setdefault(self.source_message.id, {})
         order_data = state.get("order_data")
 
         if action == "confirm_purchase":
-            await interaction.response.send_modal(PurchaseConfirmModal(order_data, interaction.message))
+            await interaction.response.send_modal(PurchaseConfirmModal(order_data, self.source_message))
         elif action == "not_bought":
             embed = discord.Embed(title="Purchase Marked Not Bought", color=discord.Color.red())
             embed.add_field(name="Marked By", value=interaction.user.mention, inline=True)
@@ -553,12 +675,12 @@ class StaffToolsSelect(discord.ui.Select):
             if order_data and order_data.get("order_id"):
                 embed.add_field(name="Order ID", value=str(order_data["order_id"]), inline=True)
             await send_purchase_log(embed)
-            await edit_ticket_status_message(interaction, "Cancelled")
+            await edit_ticket_status_message(interaction, "Cancelled", message=self.source_message)
             await interaction.response.send_message(embed=embed)
         elif action == "close_ticket":
-            await interaction.response.send_modal(CloseReasonModal(interaction.message))
+            await interaction.response.send_modal(CloseReasonModal(self.source_message))
         elif action == "reopen_ticket":
-            await reopen_ticket(interaction)
+            await reopen_ticket(interaction, self.source_message)
         elif action == "delete_ticket":
             await interaction.response.send_message("Delete confirmation:", view=DeleteConfirmView(), ephemeral=True)
         elif action == "add_user":
@@ -569,13 +691,22 @@ class StaffToolsSelect(discord.ui.Select):
             await interaction.response.send_modal(RenameTicketModal())
 
 
+class StaffToolsPrivateView(discord.ui.View):
+    def __init__(self, source_message: discord.Message):
+        super().__init__(timeout=180)
+        self.add_item(StaffToolsSelect(source_message))
+
+
 class TicketStaffView(discord.ui.View):
-    def __init__(self, order_data: dict[str, Any] | None = None):
+    def __init__(self, order_data: dict[str, Any] | None = None, claimed: bool = False):
         super().__init__(timeout=None)
         self.order_data = order_data
-        self.add_item(StaffToolsSelect())
+        for child in self.children:
+            if getattr(child, "custom_id", "") == "cloudverse_ticket_claimed":
+                child.disabled = claimed
+                child.label = "Claimed" if claimed else "Claim"
 
-    @discord.ui.button(label="Claimed", style=discord.ButtonStyle.green, custom_id="cloudverse_ticket_claimed")
+    @discord.ui.button(label="Claim", style=discord.ButtonStyle.green, custom_id="cloudverse_ticket_claimed")
     async def claimed_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         if not is_staff(interaction.user):
             await interaction.response.send_message("Only staff can use this button.", ephemeral=True)
@@ -592,6 +723,7 @@ class TicketStaffView(discord.ui.View):
         state["status"] = "Claimed"
         state["order_data"] = state.get("order_data") or self.order_data
 
+        button.label = "Claimed"
         button.disabled = True
         if interaction.message and interaction.message.embeds:
             embed = interaction.message.embeds[0]
@@ -602,9 +734,17 @@ class TicketStaffView(discord.ui.View):
 
         await interaction.response.send_message(f"Ticket claimed by {interaction.user.mention}.", ephemeral=True)
 
+    @discord.ui.button(label="Staff Tools", style=discord.ButtonStyle.blurple, custom_id="cloudverse_ticket_staff_tools")
+    async def staff_tools_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message("Only staff can use ticket tools.", ephemeral=True)
+            return
+        await interaction.response.send_message("Choose a staff action:", view=StaffToolsPrivateView(interaction.message), ephemeral=True)
+
 
 class ClosedToolsSelect(discord.ui.Select):
-    def __init__(self):
+    def __init__(self, source_message: discord.Message):
+        self.source_message = source_message
         options = [
             discord.SelectOption(label="Reopen Ticket", value="reopen_ticket"),
             discord.SelectOption(label="Delete Ticket", value="delete_ticket"),
@@ -622,15 +762,27 @@ class ClosedToolsSelect(discord.ui.Select):
             await interaction.response.send_message("Only staff can use ticket tools.", ephemeral=True)
             return
         if self.values[0] == "reopen_ticket":
-            await reopen_ticket(interaction)
+            await reopen_ticket(interaction, self.source_message)
         else:
             await interaction.response.send_message("Delete confirmation:", view=DeleteConfirmView(), ephemeral=True)
+
+
+class ClosedToolsPrivateView(discord.ui.View):
+    def __init__(self, source_message: discord.Message):
+        super().__init__(timeout=180)
+        self.add_item(ClosedToolsSelect(source_message))
 
 
 class ClosedTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(ClosedToolsSelect())
+
+    @discord.ui.button(label="Closed Tools", style=discord.ButtonStyle.blurple, custom_id="cloudverse_closed_ticket_tools_button")
+    async def closed_tools_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        if not is_staff(interaction.user):
+            await interaction.response.send_message("Only staff can use closed ticket tools.", ephemeral=True)
+            return
+        await interaction.response.send_message("Choose a closed-ticket action:", view=ClosedToolsPrivateView(interaction.message), ephemeral=True)
 
 
 class DeleteConfirmView(discord.ui.View):
