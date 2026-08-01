@@ -2,6 +2,7 @@ import asyncio
 import html
 import io
 import os
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -18,6 +19,18 @@ from pydantic import BaseModel, Field
 # =========================================================
 
 TOKEN = os.getenv("TOKEN")
+
+TRIGGER_FILE = "triggers.json"
+
+if os.path.exists(TRIGGER_FILE):
+    with open(TRIGGER_FILE, "r") as f:
+        triggers = json.load(f)
+else:
+    triggers = {}
+
+def save_triggers():
+    with open(TRIGGER_FILE, "w") as f:
+        json.dump(triggers, f, indent=4)
 
 # You can hardcode normal Discord IDs safely.
 # Keep TOKEN and WEBSITE_TICKET_SECRET in Railway Variables.
@@ -71,6 +84,11 @@ bot = commands.Bot(
     command_prefix=",",
     intents=intents,
     help_command=None,
+)
+
+trigger = bot.create_group(
+    "trigger",
+    "Manage message triggers"
 )
 
 app = FastAPI(title="Cloudverse Bot Internal API")
@@ -1321,6 +1339,76 @@ async def slash_purge(ctx, amount: int):
     await ctx.channel.purge(limit=amount)
     await ctx.respond(f"Deleted {amount} messages", delete_after=3)
 
+@trigger.command(name="add")
+@commands.has_permissions(administrator=True)
+async def trigger_add(
+    ctx,
+    trigger_word: str,
+    title: str,
+    response: str
+):
+
+    trigger_word = trigger_word.lower()
+
+    triggers[trigger_word] = {
+        "title": title,
+        "response": response
+    }
+
+    save_triggers()
+
+    await ctx.respond(
+        f"✅ Trigger `{trigger_word}` added.",
+        ephemeral=True
+    )
+
+
+@trigger.command(name="remove")
+@commands.has_permissions(administrator=True)
+async def trigger_remove(
+    ctx,
+    trigger_word: str
+):
+
+    trigger_word = trigger_word.lower()
+
+    if trigger_word not in triggers:
+        return await ctx.respond(
+            "Trigger not found.",
+            ephemeral=True
+        )
+
+    del triggers[trigger_word]
+
+    save_triggers()
+
+    await ctx.respond(
+        "Trigger removed.",
+        ephemeral=True
+    )
+
+
+@trigger.command(name="list")
+@commands.has_permissions(administrator=True)
+async def trigger_list(ctx):
+
+    embed = discord.Embed(
+        title="Triggers",
+        color=discord.Color.blurple()
+    )
+
+    if not triggers:
+        embed.description = "No triggers."
+
+    else:
+
+        embed.description = "\n".join(
+            f"• `{x}`"
+            for x in triggers
+        )
+
+    await ctx.respond(embed=embed, ephemeral=True)
+
 
 # =========================================================
 # EVENTS
@@ -1333,6 +1421,31 @@ async def on_ready():
     bot.add_view(ClosedTicketView())
     bot.add_view(DeleteConfirmView())
     print(f"Logged in as {bot.user}")
+
+@bot.event
+async def on_message(message):
+
+    if message.author.bot:
+        return
+
+    content = message.content.lower().strip()
+
+    if content in triggers:
+
+        data = triggers[content]
+
+        embed = discord.Embed(
+            title=data["title"],
+            description=data["response"],
+            color=discord.Color.red()
+        )
+
+        await message.reply(
+            embed=embed,
+            mention_author=False
+        )
+
+    await bot.process_commands(message)
 
 
 @bot.event
