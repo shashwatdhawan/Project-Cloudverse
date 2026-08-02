@@ -83,6 +83,8 @@ LEVEL_DB_PATH = os.getenv("LEVEL_DB_PATH", "cloudverse_levels.sqlite3")
 LEVEL_UP_CHANNEL_ID = 1502694830437040257
 XP_PER_MESSAGE = 1
 XP_COOLDOWN_SECONDS = 60
+VOICE_XP_PER_MINUTE = 1
+VOICE_TRACK_SECONDS = 60
 LEVEL_MILESTONES = {
     0: 0,
     5: 5000,
@@ -128,6 +130,8 @@ ticket_claims: dict[int, dict[str, Any]] = {}
 level_db: sqlite3.Connection | None = None
 level_db_lock = asyncio.Lock()
 level_cache: dict[int, dict[str, int]] = {}
+voice_sessions: dict[int, dict[str, int]] = {}
+voice_xp_task: asyncio.Task | None = None
 
 
 # =========================================================
@@ -361,6 +365,19 @@ def next_reward_role_id(level: int) -> int | None:
     return None
 
 
+def blank_level_record(user_id: int) -> dict[str, int]:
+    return {
+        "user_id": int(user_id),
+        "xp": 0,
+        "level": 0,
+        "messages": 0,
+        "last_xp_ts": 0,
+        "voice_seconds": 0,
+        "voice_xp": 0,
+        "text_xp": 0,
+    }
+
+
 async def init_level_database() -> None:
     global level_db
     level_db = sqlite3.connect(LEVEL_DB_PATH, check_same_thread=False)
@@ -373,10 +390,25 @@ async def init_level_database() -> None:
                 xp INTEGER NOT NULL DEFAULT 0,
                 level INTEGER NOT NULL DEFAULT 0,
                 messages INTEGER NOT NULL DEFAULT 0,
-                last_xp_ts INTEGER NOT NULL DEFAULT 0
+                last_xp_ts INTEGER NOT NULL DEFAULT 0,
+                voice_seconds INTEGER NOT NULL DEFAULT 0,
+                voice_xp INTEGER NOT NULL DEFAULT 0,
+                text_xp INTEGER NOT NULL DEFAULT 0
             )
             """
         )
+        existing_columns = {
+            row["name"]
+            for row in level_db.execute("PRAGMA table_info(levels)").fetchall()
+        }
+        migrations = {
+            "voice_seconds": "ALTER TABLE levels ADD COLUMN voice_seconds INTEGER NOT NULL DEFAULT 0",
+            "voice_xp": "ALTER TABLE levels ADD COLUMN voice_xp INTEGER NOT NULL DEFAULT 0",
+            "text_xp": "ALTER TABLE levels ADD COLUMN text_xp INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, sql in migrations.items():
+            if column not in existing_columns:
+                level_db.execute(sql)
         level_db.commit()
 
 
@@ -388,9 +420,9 @@ async def get_level_record(user_id: int) -> dict[str, int]:
     async with level_db_lock:
         row = level_db.execute("SELECT * FROM levels WHERE user_id = ?", (user_id,)).fetchone()
         if row is None:
-            record = {"user_id": user_id, "xp": 0, "level": 0, "messages": 0, "last_xp_ts": 0}
+            record = blank_level_record(user_id)
             level_db.execute(
-                "INSERT OR IGNORE INTO levels (user_id, xp, level, messages, last_xp_ts) VALUES (?, 0, 0, 0, 0)",
+                "INSERT OR IGNORE INTO levels (user_id, xp, level, messages, last_xp_ts, voice_seconds, voice_xp, text_xp) VALUES (?, 0, 0, 0, 0, 0, 0, 0)",
                 (user_id,),
             )
             level_db.commit()
@@ -401,6 +433,9 @@ async def get_level_record(user_id: int) -> dict[str, int]:
                 "level": int(row["level"]),
                 "messages": int(row["messages"]),
                 "last_xp_ts": int(row["last_xp_ts"]),
+                "voice_seconds": int(row["voice_seconds"]),
+                "voice_xp": int(row["voice_xp"]),
+                "text_xp": int(row["text_xp"]),
             }
     level_cache[user_id] = record
     return record
@@ -413,13 +448,16 @@ async def save_level_record(record: dict[str, int]) -> None:
     async with level_db_lock:
         level_db.execute(
             """
-            INSERT INTO levels (user_id, xp, level, messages, last_xp_ts)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO levels (user_id, xp, level, messages, last_xp_ts, voice_seconds, voice_xp, text_xp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 xp = excluded.xp,
                 level = excluded.level,
                 messages = excluded.messages,
-                last_xp_ts = excluded.last_xp_ts
+                last_xp_ts = excluded.last_xp_ts,
+                voice_seconds = excluded.voice_seconds,
+                voice_xp = excluded.voice_xp,
+                text_xp = excluded.text_xp
             """,
             (
                 int(record["user_id"]),
@@ -427,6 +465,9 @@ async def save_level_record(record: dict[str, int]) -> None:
                 int(record["level"]),
                 int(record["messages"]),
                 int(record["last_xp_ts"]),
+                int(record.get("voice_seconds", 0)),
+                int(record.get("voice_xp", 0)),
+                int(record.get("text_xp", 0)),
             ),
         )
         level_db.commit()
@@ -579,6 +620,74 @@ async def generate_level_card(member: discord.Member, record: dict[str, int], le
     return discord.File(buffer, filename=filename)
 
 
+async def generate_stats_card(member: discord.Member, record: dict[str, int]) -> discord.File | None:
+    if Image is None or ImageDraw is None:
+        return None
+
+    width, height = 1000, 520
+    base = make_cloudverse_background(width, height)
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 85))
+    base = Image.alpha_composite(base, overlay)
+    draw = ImageDraw.Draw(base)
+
+    draw.rounded_rectangle((28, 28, width - 28, height - 28), radius=30, fill=(7, 13, 28, 205), outline=(70, 180, 255, 180), width=3)
+    draw.rounded_rectangle((54, 54, 330, height - 54), radius=26, fill=(12, 22, 44, 230), outline=(120, 90, 255, 150), width=2)
+
+    avatar = rounded_avatar(await avatar_image(member), 190)
+    base.alpha_composite(avatar, (97, 86))
+
+    title_font = load_font(46, True)
+    mid_font = load_font(31, True)
+    small_font = load_font(23, False)
+    label_font = load_font(20, True)
+
+    draw.text((82, 300), member.display_name[:18], font=mid_font, fill=(255, 255, 255))
+    draw.text((82, 340), f"Level {record['level']}", font=mid_font, fill=(125, 220, 255))
+    draw.text((82, 382), current_rank_name(record["level"]), font=small_font, fill=(196, 181, 253))
+
+    left = 380
+    draw.text((left, 70), "Cloudverse Player Stats", font=title_font, fill=(255, 255, 255))
+    draw.text((left, 122), "Text activity, voice activity, XP progress and rewards", font=small_font, fill=(190, 210, 255))
+
+    current_level_xp = xp_for_level(record["level"])
+    next_level_xp = xp_for_level(record["level"] + 1)
+    current_progress = max(0, record["xp"] - current_level_xp)
+    needed_progress = max(1, next_level_xp - current_level_xp)
+    percent = min(1, current_progress / needed_progress)
+
+    bar_x, bar_y = left, 172
+    bar_w, bar_h = 540, 34
+    draw.rounded_rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), radius=17, fill=(16, 28, 50, 255))
+    draw.rounded_rectangle((bar_x, bar_y, bar_x + int(bar_w * percent), bar_y + bar_h), radius=17, fill=(40, 180, 255, 255))
+    draw.rounded_rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), radius=17, outline=(140, 220, 255, 180), width=2)
+    draw.text((bar_x, bar_y - 31), f"{record['xp']:,} XP / {next_level_xp:,} XP", font=small_font, fill=(225, 240, 255))
+
+    stats = [
+        ("Messages", f"{record.get('messages', 0):,}"),
+        ("Voice Time", format_duration(record.get("voice_seconds", 0))),
+        ("Text XP", f"{record.get('text_xp', 0):,}"),
+        ("Voice XP", f"{record.get('voice_xp', 0):,}"),
+        ("Total XP", f"{record.get('xp', 0):,}"),
+        ("Next Reward", f"Level {min([m for m in LEVEL_REWARD_ROLES if m > record['level']], default=40)}" if next_reward_role_id(record["level"]) else "Unlocked"),
+    ]
+    card_w, card_h = 255, 86
+    for index, (label, value) in enumerate(stats):
+        col = index % 2
+        row = index // 2
+        x = left + col * 282
+        y = 242 + row * 104
+        draw.rounded_rectangle((x, y, x + card_w, y + card_h), radius=18, fill=(13, 25, 50, 230), outline=(75, 130, 255, 90), width=2)
+        draw.text((x + 22, y + 16), label.upper(), font=label_font, fill=(135, 220, 255))
+        draw.text((x + 22, y + 44), value, font=mid_font, fill=(255, 255, 255))
+
+    draw.text((width - 178, 42), "CLOUDVERSE", font=small_font, fill=(135, 220, 255))
+
+    buffer = io.BytesIO()
+    base.save(buffer, format="PNG")
+    buffer.seek(0)
+    return discord.File(buffer, filename="cloudverse-stats.png")
+
+
 async def send_level_up_message(member: discord.Member, old_level: int, new_level: int, record: dict[str, int]) -> None:
     await apply_level_roles(member, new_level)
     channel = member.guild.get_channel(LEVEL_UP_CHANNEL_ID)
@@ -622,6 +731,7 @@ async def handle_level_message(message: discord.Message) -> None:
 
     if now - record["last_xp_ts"] >= XP_COOLDOWN_SECONDS:
         record["xp"] += XP_PER_MESSAGE
+        record["text_xp"] = record.get("text_xp", 0) + XP_PER_MESSAGE
         record["last_xp_ts"] = now
         record["level"] = level_from_xp(record["xp"])
 
@@ -629,6 +739,87 @@ async def handle_level_message(message: discord.Message) -> None:
 
     if record["level"] > old_level:
         await send_level_up_message(message.author, old_level, record["level"], record)
+
+
+def format_duration(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+def voice_session_allowed(member: discord.Member, state: discord.VoiceState | None = None) -> bool:
+    if member.bot:
+        return False
+    voice_state = state or member.voice
+    return bool(voice_state and voice_state.channel)
+
+
+async def start_voice_session(member: discord.Member) -> None:
+    if not voice_session_allowed(member):
+        return
+    now = int(time.time())
+    voice_sessions[member.id] = {
+        "guild_id": member.guild.id,
+        "channel_id": member.voice.channel.id,
+        "started_at": now,
+        "last_tick": now,
+    }
+
+
+async def flush_voice_session(member: discord.Member, final: bool = False) -> None:
+    session = voice_sessions.get(member.id)
+    if not session:
+        return
+
+    now = int(time.time())
+    elapsed = max(0, now - int(session.get("last_tick", now)))
+    if elapsed < VOICE_TRACK_SECONDS and not final:
+        return
+
+    awardable_seconds = elapsed if final else (elapsed // VOICE_TRACK_SECONDS) * VOICE_TRACK_SECONDS
+    if awardable_seconds <= 0:
+        return
+
+    record = await get_level_record(member.id)
+    old_level = record["level"]
+    voice_xp = (awardable_seconds // 60) * VOICE_XP_PER_MINUTE
+    record["voice_seconds"] = record.get("voice_seconds", 0) + awardable_seconds
+    record["voice_xp"] = record.get("voice_xp", 0) + voice_xp
+    record["xp"] += voice_xp
+    record["level"] = level_from_xp(record["xp"])
+    session["last_tick"] = int(session.get("last_tick", now)) + awardable_seconds
+    await save_level_record(record)
+
+    if record["level"] > old_level:
+        await send_level_up_message(member, old_level, record["level"], record)
+
+    if final:
+        voice_sessions.pop(member.id, None)
+
+
+async def voice_xp_loop() -> None:
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        await asyncio.sleep(VOICE_TRACK_SECONDS)
+        for guild in list(bot.guilds):
+            for voice_channel in guild.voice_channels:
+                for member in voice_channel.members:
+                    if member.bot:
+                        continue
+                    if member.id not in voice_sessions:
+                        await start_voice_session(member)
+                    await flush_voice_session(member, final=False)
+
+
+async def restore_active_voice_sessions() -> None:
+    for guild in bot.guilds:
+        for voice_channel in guild.voice_channels:
+            for member in voice_channel.members:
+                if not member.bot and member.id not in voice_sessions:
+                    await start_voice_session(member)
 
 
 # =========================================================
@@ -1793,6 +1984,7 @@ async def rank(ctx: discord.ApplicationContext, member: discord.Member = None):
     embed.add_field(name="Progress", value=f"`{progress_bar(current_progress, needed_progress)}`", inline=False)
     embed.add_field(name="Current Rank", value=current_rank_name(record["level"]), inline=True)
     embed.add_field(name="Messages", value=f"{record['messages']:,}", inline=True)
+    embed.add_field(name="Voice Time", value=format_duration(record.get("voice_seconds", 0)), inline=True)
     embed.add_field(name="Reward Role", value=reward_text, inline=True)
 
     file = await generate_level_card(target, record)
@@ -1816,6 +2008,7 @@ async def level(ctx: discord.ApplicationContext, member: discord.Member = None):
     embed.set_thumbnail(url=user_avatar_url(target))
     embed.add_field(name="XP Until Next Level", value=f"{max(0, next_xp - record['xp']):,}", inline=True)
     embed.add_field(name="Messages", value=f"{record['messages']:,}", inline=True)
+    embed.add_field(name="Voice Time", value=format_duration(record.get("voice_seconds", 0)), inline=True)
     await ctx.respond(embed=embed)
 
 
@@ -1825,7 +2018,7 @@ async def leaderboard(ctx: discord.ApplicationContext):
         await init_level_database()
     async with level_db_lock:
         rows = level_db.execute(
-            "SELECT user_id, xp, level, messages FROM levels ORDER BY xp DESC, messages DESC LIMIT 10"
+            "SELECT user_id, xp, level, messages, voice_seconds FROM levels ORDER BY xp DESC, messages DESC LIMIT 10"
         ).fetchall()
 
     embed = discord.Embed(
@@ -1848,6 +2041,30 @@ async def leaderboard(ctx: discord.ApplicationContext):
             )
         embed.description = "\n".join(lines)
     await ctx.respond(embed=embed)
+
+
+@bot.slash_command(name="stats", description="Show a Cloudverse player profile stats card")
+async def stats(ctx: discord.ApplicationContext, member: discord.Member = None):
+    target = member or ctx.author
+    record = await get_level_record(target.id)
+    embed = discord.Embed(
+        title=f"{target.display_name}'s Cloudverse Stats",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_thumbnail(url=user_avatar_url(target))
+    embed.add_field(name="Level", value=str(record["level"]), inline=True)
+    embed.add_field(name="Total XP", value=f"{record['xp']:,}", inline=True)
+    embed.add_field(name="Rank", value=current_rank_name(record["level"]), inline=True)
+    embed.add_field(name="Messages", value=f"{record.get('messages', 0):,}", inline=True)
+    embed.add_field(name="Voice Time", value=format_duration(record.get("voice_seconds", 0)), inline=True)
+    embed.add_field(name="Voice XP", value=f"{record.get('voice_xp', 0):,}", inline=True)
+    file = await generate_stats_card(target, record)
+    if file:
+        embed.set_image(url="attachment://cloudverse-stats.png")
+        await ctx.respond(embed=embed, file=file)
+    else:
+        await ctx.respond(embed=embed)
 
 
 @bot.slash_command(name="setlevel", description="Admin: set a member's Cloudverse level")
@@ -1885,6 +2102,9 @@ async def resetxp(ctx: discord.ApplicationContext, member: discord.Member):
     record["level"] = 0
     record["messages"] = 0
     record["last_xp_ts"] = 0
+    record["voice_seconds"] = 0
+    record["voice_xp"] = 0
+    record["text_xp"] = 0
     await save_level_record(record)
     await ctx.respond(f"Reset XP for {member.mention}.", ephemeral=True)
 
@@ -1895,7 +2115,11 @@ async def resetxp(ctx: discord.ApplicationContext, member: discord.Member):
 
 @bot.event
 async def on_ready():
+    global voice_xp_task
     await init_level_database()
+    await restore_active_voice_sessions()
+    if voice_xp_task is None or voice_xp_task.done():
+        voice_xp_task = asyncio.create_task(voice_xp_loop())
     bot.add_view(TicketPanelView())
     bot.add_view(TicketStaffView())
     bot.add_view(ClosedTicketView())
@@ -1928,6 +2152,27 @@ async def on_message(message):
         )
 
     await bot.process_commands(message)
+
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    if member.bot:
+        return
+
+    joined_voice = before.channel is None and after.channel is not None
+    left_voice = before.channel is not None and after.channel is None
+    moved_voice = before.channel is not None and after.channel is not None and before.channel.id != after.channel.id
+
+    if joined_voice:
+        await start_voice_session(member)
+    elif left_voice:
+        await flush_voice_session(member, final=True)
+    elif moved_voice:
+        session = voice_sessions.get(member.id)
+        if session:
+            session["channel_id"] = after.channel.id
+        else:
+            await start_voice_session(member)
 
 
 @bot.event
