@@ -1,9 +1,12 @@
 import asyncio
 import html
 import io
+import math
 import os
 import json
 import re
+import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -12,6 +15,14 @@ import uvicorn
 from discord.ext import commands
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
+
+try:
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+except Exception:
+    Image = None
+    ImageDraw = None
+    ImageFont = None
+    ImageFilter = None
 
 
 # =========================================================
@@ -68,6 +79,27 @@ TICKET_CATEGORY_IDS = {
 
 WEBSITE_TICKET_SECRET = os.getenv("WEBSITE_TICKET_SECRET", "")
 PORT = int(os.getenv("PORT", "8001"))
+LEVEL_DB_PATH = os.getenv("LEVEL_DB_PATH", "cloudverse_levels.sqlite3")
+LEVEL_UP_CHANNEL_ID = 1502694830437040257
+XP_PER_MESSAGE = 1
+XP_COOLDOWN_SECONDS = 60
+LEVEL_MILESTONES = {
+    0: 0,
+    5: 5000,
+    10: 11000,
+    15: 16000,
+    20: 20000,
+    30: 22000,
+    40: 30000,
+}
+LEVEL_REWARD_ROLES = {
+    5: 1502694829774078061,
+    10: 1502694829774078059,
+    15: 1502694829774078058,
+    20: 1502694829774078056,
+    30: 1502694829774078055,
+    40: 1502694829774078054,
+}
 
 CLOUDVERSE_BANNER_URL = "https://cdn.discordapp.com/banners/1527932373428076655/961db732e8b3829ad84458d863cdab00.png?size=4096"
 
@@ -93,6 +125,9 @@ trigger = bot.create_group(
 
 app = FastAPI(title="Cloudverse Bot Internal API")
 ticket_claims: dict[int, dict[str, Any]] = {}
+level_db: sqlite3.Connection | None = None
+level_db_lock = asyncio.Lock()
+level_cache: dict[int, dict[str, int]] = {}
 
 
 # =========================================================
@@ -273,6 +308,327 @@ def format_member_value(guild: discord.Guild, user_id: int | str | None, fallbac
         return fallback
     member = guild.get_member(member_id)
     return member.mention if member else f"<@{member_id}>"
+
+
+# =========================================================
+# LEVEL SYSTEM
+# =========================================================
+
+def xp_for_level(level: int) -> int:
+    level = max(0, int(level))
+    if level in LEVEL_MILESTONES:
+        return LEVEL_MILESTONES[level]
+
+    points = sorted(LEVEL_MILESTONES.items())
+    for (level_a, xp_a), (level_b, xp_b) in zip(points, points[1:]):
+        if level_a <= level <= level_b:
+            progress = (level - level_a) / (level_b - level_a)
+            eased = progress * progress * (3 - 2 * progress)
+            return round(xp_a + (xp_b - xp_a) * eased)
+
+    return LEVEL_MILESTONES[40] + ((level - 40) * 2500)
+
+
+def level_from_xp(xp: int) -> int:
+    xp = max(0, int(xp))
+    level = 0
+    while xp_for_level(level + 1) <= xp:
+        level += 1
+        if level > 10000:
+            break
+    return level
+
+
+def progress_bar(current: int, needed: int, width: int = 18) -> str:
+    if needed <= 0:
+        filled = width
+    else:
+        filled = min(width, max(0, round((current / needed) * width)))
+    return "█" * filled + "░" * (width - filled)
+
+
+def current_rank_name(level: int) -> str:
+    unlocked = [milestone for milestone in LEVEL_REWARD_ROLES if level >= milestone]
+    if not unlocked:
+        return "Member"
+    return f"Level {max(unlocked)} Reward"
+
+
+def next_reward_role_id(level: int) -> int | None:
+    for milestone in sorted(LEVEL_REWARD_ROLES):
+        if level < milestone:
+            return LEVEL_REWARD_ROLES[milestone]
+    return None
+
+
+async def init_level_database() -> None:
+    global level_db
+    level_db = sqlite3.connect(LEVEL_DB_PATH, check_same_thread=False)
+    level_db.row_factory = sqlite3.Row
+    async with level_db_lock:
+        level_db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS levels (
+                user_id INTEGER PRIMARY KEY,
+                xp INTEGER NOT NULL DEFAULT 0,
+                level INTEGER NOT NULL DEFAULT 0,
+                messages INTEGER NOT NULL DEFAULT 0,
+                last_xp_ts INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        level_db.commit()
+
+
+async def get_level_record(user_id: int) -> dict[str, int]:
+    if user_id in level_cache:
+        return level_cache[user_id]
+    if level_db is None:
+        await init_level_database()
+    async with level_db_lock:
+        row = level_db.execute("SELECT * FROM levels WHERE user_id = ?", (user_id,)).fetchone()
+        if row is None:
+            record = {"user_id": user_id, "xp": 0, "level": 0, "messages": 0, "last_xp_ts": 0}
+            level_db.execute(
+                "INSERT OR IGNORE INTO levels (user_id, xp, level, messages, last_xp_ts) VALUES (?, 0, 0, 0, 0)",
+                (user_id,),
+            )
+            level_db.commit()
+        else:
+            record = {
+                "user_id": int(row["user_id"]),
+                "xp": int(row["xp"]),
+                "level": int(row["level"]),
+                "messages": int(row["messages"]),
+                "last_xp_ts": int(row["last_xp_ts"]),
+            }
+    level_cache[user_id] = record
+    return record
+
+
+async def save_level_record(record: dict[str, int]) -> None:
+    if level_db is None:
+        await init_level_database()
+    level_cache[int(record["user_id"])] = record
+    async with level_db_lock:
+        level_db.execute(
+            """
+            INSERT INTO levels (user_id, xp, level, messages, last_xp_ts)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                xp = excluded.xp,
+                level = excluded.level,
+                messages = excluded.messages,
+                last_xp_ts = excluded.last_xp_ts
+            """,
+            (
+                int(record["user_id"]),
+                int(record["xp"]),
+                int(record["level"]),
+                int(record["messages"]),
+                int(record["last_xp_ts"]),
+            ),
+        )
+        level_db.commit()
+
+
+async def set_user_xp(member: discord.Member, xp: int, preserve_cooldown: bool = True) -> dict[str, int]:
+    record = await get_level_record(member.id)
+    record["xp"] = max(0, int(xp))
+    record["level"] = level_from_xp(record["xp"])
+    if not preserve_cooldown:
+        record["last_xp_ts"] = 0
+    await save_level_record(record)
+    await apply_level_roles(member, record["level"])
+    return record
+
+
+async def apply_level_roles(member: discord.Member, level: int) -> None:
+    roles_to_add = []
+    for milestone, role_id in LEVEL_REWARD_ROLES.items():
+        if level >= milestone:
+            role = member.guild.get_role(role_id)
+            if role and role not in member.roles:
+                roles_to_add.append(role)
+    if roles_to_add:
+        try:
+            await member.add_roles(*roles_to_add, reason=f"Cloudverse level reward: Level {level}")
+        except discord.Forbidden:
+            pass
+        except discord.HTTPException:
+            pass
+
+
+def load_font(size: int, bold: bool = False):
+    if ImageFont is None:
+        return None
+    candidates = [
+        "arialbd.ttf" if bold else "arial.ttf",
+        "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf",
+    ]
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def rounded_avatar(avatar: Any, size: int) -> Any:
+    avatar = avatar.convert("RGBA").resize((size, size))
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, size - 1, size - 1), fill=255)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(avatar, (0, 0), mask)
+    return out
+
+
+def make_cloudverse_background(width: int, height: int) -> Any:
+    image = Image.new("RGB", (width, height), "#07111f")
+    draw = ImageDraw.Draw(image)
+    for y in range(height):
+        ratio = y / max(1, height - 1)
+        r = round(7 + 20 * ratio)
+        g = round(17 + 22 * ratio)
+        b = round(31 + 70 * ratio)
+        draw.line((0, y, width, y), fill=(r, g, b))
+    for i in range(18):
+        x = (i * 97) % width
+        y = 20 + ((i * 53) % max(1, height - 80))
+        color = (45, 160, 255, 38) if i % 2 else (143, 92, 255, 32)
+        overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+        od.ellipse((x - 90, y - 34, x + 160, y + 70), fill=color)
+        overlay = overlay.filter(ImageFilter.GaussianBlur(28))
+        image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+    return image.convert("RGBA")
+
+
+async def avatar_image(member: discord.Member, size: int = 256) -> Any:
+    try:
+        data = await member.display_avatar.with_size(size).read()
+        return Image.open(io.BytesIO(data)).convert("RGBA")
+    except Exception:
+        fallback = Image.new("RGBA", (size, size), (40, 120, 220, 255))
+        draw = ImageDraw.Draw(fallback)
+        draw.text((size // 2 - 28, size // 2 - 18), "CV", font=load_font(42, True), fill="white")
+        return fallback
+
+
+async def generate_level_card(member: discord.Member, record: dict[str, int], level_up: tuple[int, int] | None = None) -> discord.File | None:
+    if Image is None or ImageDraw is None:
+        return None
+
+    width, height = (1000, 360) if not level_up else (1100, 420)
+    bg_path = "background.png"
+    if os.path.exists(bg_path):
+        try:
+            base = Image.open(bg_path).convert("RGBA").resize((width, height))
+        except Exception:
+            base = make_cloudverse_background(width, height)
+    else:
+        base = make_cloudverse_background(width, height)
+
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 70))
+    base = Image.alpha_composite(base, overlay)
+    draw = ImageDraw.Draw(base)
+    draw.rounded_rectangle((28, 28, width - 28, height - 28), radius=28, fill=(8, 14, 30, 190), outline=(70, 180, 255, 170), width=3)
+
+    avatar = rounded_avatar(await avatar_image(member), 190 if not level_up else 210)
+    avatar_x = 70
+    avatar_y = (height - avatar.height) // 2
+    draw.ellipse((avatar_x - 8, avatar_y - 8, avatar_x + avatar.width + 8, avatar_y + avatar.height + 8), fill=(45, 190, 255, 80), outline=(120, 220, 255, 220), width=4)
+    base.alpha_composite(avatar, (avatar_x, avatar_y))
+
+    title_font = load_font(62 if level_up else 46, True)
+    big_font = load_font(52, True)
+    mid_font = load_font(34, True)
+    small_font = load_font(25, False)
+
+    left = avatar_x + avatar.width + 50
+    username = member.display_name[:26]
+    if level_up:
+        old_level, new_level = level_up
+        draw.text((left, 70), "LEVEL UP", font=title_font, fill=(135, 220, 255))
+        draw.text((left, 148), username, font=mid_font, fill=(255, 255, 255))
+        draw.text((left, 204), f"Level {old_level}  →  Level {new_level}", font=big_font, fill=(190, 150, 255))
+    else:
+        draw.text((left, 72), username, font=title_font, fill=(255, 255, 255))
+        draw.text((left, 138), f"Level {record['level']} • {current_rank_name(record['level'])}", font=mid_font, fill=(135, 220, 255))
+
+    current_level_xp = xp_for_level(record["level"])
+    next_level_xp = xp_for_level(record["level"] + 1)
+    progress_current = max(0, record["xp"] - current_level_xp)
+    progress_needed = max(1, next_level_xp - current_level_xp)
+    percent = min(1, progress_current / progress_needed)
+
+    bar_x, bar_y = left, height - 105
+    bar_w, bar_h = width - left - 80, 36
+    draw.rounded_rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), radius=18, fill=(16, 28, 50, 255))
+    draw.rounded_rectangle((bar_x, bar_y, bar_x + int(bar_w * percent), bar_y + bar_h), radius=18, fill=(40, 180, 255, 255))
+    draw.rounded_rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), radius=18, outline=(140, 220, 255, 180), width=2)
+    draw.text((bar_x, bar_y - 36), f"XP {record['xp']:,} / {next_level_xp:,}", font=small_font, fill=(225, 240, 255))
+    draw.text((width - 170, 44), "CLOUDVERSE", font=small_font, fill=(135, 220, 255))
+
+    buffer = io.BytesIO()
+    base.save(buffer, format="PNG")
+    buffer.seek(0)
+    filename = "cloudverse-level-up.png" if level_up else "cloudverse-rank.png"
+    return discord.File(buffer, filename=filename)
+
+
+async def send_level_up_message(member: discord.Member, old_level: int, new_level: int, record: dict[str, int]) -> None:
+    await apply_level_roles(member, new_level)
+    channel = member.guild.get_channel(LEVEL_UP_CHANNEL_ID)
+    if not channel:
+        return
+
+    embed = discord.Embed(
+        title=f"Congratulations {member.display_name}!",
+        description=(
+            f"☁️ Congratulations {member.mention}!\n\n"
+            f"You reached **Level {new_level}**!\n\n"
+            "Thank you for being an active member of Cloudverse.\n"
+            "Keep chatting to unlock more rewards!"
+        ),
+        color=discord.Color.blue(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_author(name="Cloudverse Level System")
+    embed.set_thumbnail(url=user_avatar_url(member))
+    embed.add_field(name="Previous Level", value=str(old_level), inline=True)
+    embed.add_field(name="New Level", value=str(new_level), inline=True)
+    embed.add_field(name="XP Progress", value=f"{record['xp']:,} XP", inline=True)
+    file = await generate_level_card(member, record, level_up=(old_level, new_level))
+    if file:
+        embed.set_image(url="attachment://cloudverse-level-up.png")
+        await channel.send(content=member.mention, embed=embed, file=file)
+    else:
+        await channel.send(content=member.mention, embed=embed)
+
+
+async def handle_level_message(message: discord.Message) -> None:
+    if message.author.bot or not message.guild:
+        return
+    if message.content.startswith(tuple(bot.command_prefix if isinstance(bot.command_prefix, (list, tuple)) else [bot.command_prefix])):
+        return
+
+    record = await get_level_record(message.author.id)
+    now = int(time.time())
+    record["messages"] += 1
+    old_level = record["level"]
+
+    if now - record["last_xp_ts"] >= XP_COOLDOWN_SECONDS:
+        record["xp"] += XP_PER_MESSAGE
+        record["last_xp_ts"] = now
+        record["level"] = level_from_xp(record["xp"])
+
+    await save_level_record(record)
+
+    if record["level"] > old_level:
+        await send_level_up_message(message.author, old_level, record["level"], record)
 
 
 # =========================================================
@@ -1411,11 +1767,135 @@ async def trigger_list(ctx):
 
 
 # =========================================================
+# LEVEL COMMANDS
+# =========================================================
+
+@bot.slash_command(name="rank", description="Show your Cloudverse rank card")
+async def rank(ctx: discord.ApplicationContext, member: discord.Member = None):
+    target = member or ctx.author
+    record = await get_level_record(target.id)
+    current_level_xp = xp_for_level(record["level"])
+    next_level_xp = xp_for_level(record["level"] + 1)
+    current_progress = max(0, record["xp"] - current_level_xp)
+    needed_progress = max(1, next_level_xp - current_level_xp)
+    next_role_id = next_reward_role_id(record["level"])
+    reward_text = f"<@&{next_role_id}>" if next_role_id else "All level rewards unlocked"
+
+    embed = discord.Embed(
+        title=f"{target.display_name}'s Rank",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_thumbnail(url=user_avatar_url(target))
+    embed.add_field(name="Current Level", value=str(record["level"]), inline=True)
+    embed.add_field(name="XP", value=f"{record['xp']:,}", inline=True)
+    embed.add_field(name="XP Until Next Level", value=f"{max(0, next_level_xp - record['xp']):,}", inline=True)
+    embed.add_field(name="Progress", value=f"`{progress_bar(current_progress, needed_progress)}`", inline=False)
+    embed.add_field(name="Current Rank", value=current_rank_name(record["level"]), inline=True)
+    embed.add_field(name="Messages", value=f"{record['messages']:,}", inline=True)
+    embed.add_field(name="Reward Role", value=reward_text, inline=True)
+
+    file = await generate_level_card(target, record)
+    if file:
+        embed.set_image(url="attachment://cloudverse-rank.png")
+        await ctx.respond(embed=embed, file=file)
+    else:
+        await ctx.respond(embed=embed)
+
+
+@bot.slash_command(name="level", description="Show your current Cloudverse level")
+async def level(ctx: discord.ApplicationContext, member: discord.Member = None):
+    target = member or ctx.author
+    record = await get_level_record(target.id)
+    next_xp = xp_for_level(record["level"] + 1)
+    embed = discord.Embed(
+        title="Cloudverse Level",
+        description=f"{target.mention} is **Level {record['level']}** with **{record['xp']:,} XP**.",
+        color=discord.Color.blue(),
+    )
+    embed.set_thumbnail(url=user_avatar_url(target))
+    embed.add_field(name="XP Until Next Level", value=f"{max(0, next_xp - record['xp']):,}", inline=True)
+    embed.add_field(name="Messages", value=f"{record['messages']:,}", inline=True)
+    await ctx.respond(embed=embed)
+
+
+@bot.slash_command(name="leaderboard", description="Show the top 10 Cloudverse XP users")
+async def leaderboard(ctx: discord.ApplicationContext):
+    if level_db is None:
+        await init_level_database()
+    async with level_db_lock:
+        rows = level_db.execute(
+            "SELECT user_id, xp, level, messages FROM levels ORDER BY xp DESC, messages DESC LIMIT 10"
+        ).fetchall()
+
+    embed = discord.Embed(
+        title="Cloudverse XP Leaderboard",
+        description="Top 10 most active members.",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_thumbnail(url=CLOUDVERSE_THUMBNAIL_URL)
+    if not rows:
+        embed.description = "No XP data yet."
+    else:
+        lines = []
+        for index, row in enumerate(rows, start=1):
+            user_id = int(row["user_id"])
+            member = ctx.guild.get_member(user_id) if ctx.guild else None
+            name = member.mention if member else f"<@{user_id}>"
+            lines.append(
+                f"**#{index}** {name} - Level **{int(row['level'])}** • **{int(row['xp']):,} XP** • {int(row['messages']):,} messages"
+            )
+        embed.description = "\n".join(lines)
+    await ctx.respond(embed=embed)
+
+
+@bot.slash_command(name="setlevel", description="Admin: set a member's Cloudverse level")
+@commands.has_permissions(administrator=True)
+async def setlevel(ctx: discord.ApplicationContext, member: discord.Member, new_level: int):
+    new_level = max(0, int(new_level))
+    record = await set_user_xp(member, xp_for_level(new_level))
+    await ctx.respond(f"Set {member.mention} to Level {record['level']} with {record['xp']:,} XP.", ephemeral=True)
+
+
+@bot.slash_command(name="addxp", description="Admin: add XP to a member")
+@commands.has_permissions(administrator=True)
+async def addxp(ctx: discord.ApplicationContext, member: discord.Member, amount: int):
+    record = await get_level_record(member.id)
+    old_level = record["level"]
+    record = await set_user_xp(member, record["xp"] + max(0, int(amount)))
+    if record["level"] > old_level:
+        await apply_level_roles(member, record["level"])
+    await ctx.respond(f"Added {max(0, int(amount)):,} XP to {member.mention}. New total: {record['xp']:,} XP.", ephemeral=True)
+
+
+@bot.slash_command(name="removexp", description="Admin: remove XP from a member")
+@commands.has_permissions(administrator=True)
+async def removexp(ctx: discord.ApplicationContext, member: discord.Member, amount: int):
+    record = await get_level_record(member.id)
+    record = await set_user_xp(member, record["xp"] - max(0, int(amount)))
+    await ctx.respond(f"Removed {max(0, int(amount)):,} XP from {member.mention}. New total: {record['xp']:,} XP.", ephemeral=True)
+
+
+@bot.slash_command(name="resetxp", description="Admin: reset a member's XP")
+@commands.has_permissions(administrator=True)
+async def resetxp(ctx: discord.ApplicationContext, member: discord.Member):
+    record = await get_level_record(member.id)
+    record["xp"] = 0
+    record["level"] = 0
+    record["messages"] = 0
+    record["last_xp_ts"] = 0
+    await save_level_record(record)
+    await ctx.respond(f"Reset XP for {member.mention}.", ephemeral=True)
+
+
+# =========================================================
 # EVENTS
 # =========================================================
 
 @bot.event
 async def on_ready():
+    await init_level_database()
     bot.add_view(TicketPanelView())
     bot.add_view(TicketStaffView())
     bot.add_view(ClosedTicketView())
@@ -1427,6 +1907,8 @@ async def on_message(message):
 
     if message.author.bot:
         return
+
+    await handle_level_message(message)
 
     content = message.content.lower().strip()
 
