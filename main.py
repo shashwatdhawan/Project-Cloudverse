@@ -2109,6 +2109,59 @@ async def resetxp(ctx: discord.ApplicationContext, member: discord.Member):
     await ctx.respond(f"Reset XP for {member.mention}.", ephemeral=True)
 
 
+@bot.command(name="steal")
+@commands.has_permissions(manage_emojis=True)
+async def steal(ctx, emoji: discord.PartialEmoji, *, name: str = None):
+    """
+    Usage:
+    ,steal <:emoji:123456789012345678>
+    ,steal <:emoji:123456789012345678> newname
+    """
+
+    if not emoji.is_custom_emoji():
+        return await ctx.send("❌ Please provide a custom Discord emoji.")
+
+    guild = ctx.guild
+
+    if len(guild.emojis) >= guild.emoji_limit:
+        return await ctx.send("❌ This server has reached its emoji limit.")
+
+    try:
+        image = await emoji.read()
+
+        new_emoji = await guild.create_custom_emoji(
+            name=name or emoji.name,
+            image=image,
+            reason=f"Emoji stolen by {ctx.author}"
+        )
+
+        embed = discord.Embed(
+            title="✅ Emoji Added!",
+            description=f"{new_emoji} has been added successfully.",
+            color=discord.Color.green()
+        )
+
+        embed.add_field(
+            name="Emoji Name",
+            value=new_emoji.name,
+            inline=True
+        )
+
+        embed.add_field(
+            name="Added By",
+            value=ctx.author.mention,
+            inline=True
+        )
+
+        await ctx.send(embed=embed)
+
+    except discord.Forbidden:
+        await ctx.send("❌ I need the **Manage Emojis and Stickers** permission.")
+
+    except Exception as e:
+        await ctx.send(f"❌ Failed to add emoji.\n```{e}```")
+
+
 # =========================================================
 # EVENTS
 # =========================================================
