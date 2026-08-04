@@ -2109,57 +2109,73 @@ async def resetxp(ctx: discord.ApplicationContext, member: discord.Member):
     await ctx.respond(f"Reset XP for {member.mention}.", ephemeral=True)
 
 
-@bot.command(name="steal")
-@commands.has_permissions(manage_emojis=True)
-async def steal(ctx, emoji: discord.PartialEmoji, *, name: str = None):
+
+@bot.slash_command(
+    name="steal",
+    description="Copy an emoji into this server."
+)
+@discord.default_permissions(manage_emojis_and_stickers=True)
+async def steal(
+    ctx: discord.ApplicationContext,
+    emoji: str,
+    name: str = None
+):
     """
-    Usage:
-    ,steal <:emoji:123456789012345678>
-    ,steal <:emoji:123456789012345678> newname
+    Example:
+    /steal
+    emoji: <:cloud:123456789012345678>
+    name: cloud
     """
 
-    if not emoji.is_custom_emoji():
-        return await ctx.send("❌ Please provide a custom Discord emoji.")
+    await ctx.defer()
 
-    guild = ctx.guild
+    partial = discord.PartialEmoji.from_str(emoji)
 
-    if len(guild.emojis) >= guild.emoji_limit:
-        return await ctx.send("❌ This server has reached its emoji limit.")
+    if partial.id is None:
+        return await ctx.followup.send(
+            "❌ Please provide a valid custom emoji.",
+            ephemeral=True
+        )
 
     try:
-        image = await emoji.read()
+        image = await partial.read()
 
-        new_emoji = await guild.create_custom_emoji(
-            name=name or emoji.name,
+        new_emoji = await ctx.guild.create_custom_emoji(
+            name=name or partial.name,
             image=image,
             reason=f"Emoji stolen by {ctx.author}"
         )
 
         embed = discord.Embed(
-            title="✅ Emoji Added!",
-            description=f"{new_emoji} has been added successfully.",
+            title="✅ Emoji Added",
+            description=f"{new_emoji} has been added successfully!",
             color=discord.Color.green()
         )
 
         embed.add_field(
             name="Emoji Name",
-            value=new_emoji.name,
-            inline=True
+            value=new_emoji.name
         )
 
         embed.add_field(
             name="Added By",
-            value=ctx.author.mention,
-            inline=True
+            value=ctx.author.mention
         )
 
-        await ctx.send(embed=embed)
+        embed.set_thumbnail(url=new_emoji.url)
+
+        await ctx.followup.send(embed=embed)
 
     except discord.Forbidden:
-        await ctx.send("❌ I need the **Manage Emojis and Stickers** permission.")
+        await ctx.followup.send(
+            "❌ I need the **Manage Emojis and Stickers** permission."
+        )
 
     except Exception as e:
-        await ctx.send(f"❌ Failed to add emoji.\n```{e}```")
+        await ctx.followup.send(
+            f"❌ Failed to steal emoji.\n```{e}```"
+        )
+
 
 
 # =========================================================
