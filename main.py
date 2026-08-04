@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 import time
+import aiohttp
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -2110,9 +2111,11 @@ async def resetxp(ctx: discord.ApplicationContext, member: discord.Member):
 
 
 
+
+
 @bot.slash_command(
     name="steal",
-    description="Copy an emoji into this server."
+    description="Steal an emoji from Discord."
 )
 @discord.default_permissions(manage_emojis_and_stickers=True)
 async def steal(
@@ -2120,60 +2123,94 @@ async def steal(
     emoji: str,
     name: str = None
 ):
-    """
-    Example:
-    /steal
-    emoji: <:cloud:123456789012345678>
-    name: cloud
-    """
 
-    await ctx.defer()
+    await ctx.defer(ephemeral=True)
 
-    partial = discord.PartialEmoji.from_str(emoji)
+    # Match <:name:id> or <a:name:id>
+    match = re.match(r"<(a?):(\w+):(\d+)>", emoji)
 
-    if partial.id is None:
+    if not match:
         return await ctx.followup.send(
-            "❌ Please provide a valid custom emoji.",
+            "❌ Please provide a valid custom emoji.\nExample: <:Cloud:123456789012345678>",
             ephemeral=True
         )
 
+    animated = match.group(1) == "a"
+    emoji_name = match.group(2)
+    emoji_id = match.group(3)
+
+    extension = "gif" if animated else "png"
+
+    url = f"https://cdn.discordapp.com/emojis/{emoji_id}.{extension}?quality=lossless"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+
+            if resp.status != 200:
+                return await ctx.followup.send(
+                    "❌ Couldn't download that emoji.",
+                    ephemeral=True
+                )
+
+            image = await resp.read()
+
     try:
-        image = await partial.read()
 
         new_emoji = await ctx.guild.create_custom_emoji(
-            name=name or partial.name,
+            name=name or emoji_name,
             image=image,
             reason=f"Emoji stolen by {ctx.author}"
         )
 
         embed = discord.Embed(
             title="✅ Emoji Added",
-            description=f"{new_emoji} has been added successfully!",
+            description=f"{new_emoji} has been added to **{ctx.guild.name}**!",
             color=discord.Color.green()
         )
 
         embed.add_field(
-            name="Emoji Name",
-            value=new_emoji.name
+            name="Emoji",
+            value=str(new_emoji),
+            inline=True
         )
 
         embed.add_field(
-            name="Added By",
-            value=ctx.author.mention
+            name="Name",
+            value=f"`{new_emoji.name}`",
+            inline=True
+        )
+
+        embed.add_field(
+            name="Animated",
+            value="Yes" if animated else "No",
+            inline=True
         )
 
         embed.set_thumbnail(url=new_emoji.url)
+
+        embed.set_footer(
+            text=f"Added by {ctx.author}",
+            icon_url=ctx.author.display_avatar.url
+        )
 
         await ctx.followup.send(embed=embed)
 
     except discord.Forbidden:
         await ctx.followup.send(
-            "❌ I need the **Manage Emojis and Stickers** permission."
+            "❌ I need **Manage Emojis and Stickers** permission.",
+            ephemeral=True
+        )
+
+    except discord.HTTPException as e:
+        await ctx.followup.send(
+            f"❌ Discord Error:\n```{e}```",
+            ephemeral=True
         )
 
     except Exception as e:
         await ctx.followup.send(
-            f"❌ Failed to steal emoji.\n```{e}```"
+            f"❌ Error:\n```{e}```",
+            ephemeral=True
         )
 
 
