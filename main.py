@@ -2221,6 +2221,35 @@ async def steal(
         )
 
 
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    should_reply = False
+
+    # Reply if the bot is mentioned
+    if bot.user in message.mentions:
+        should_reply = True
+
+    # Reply if someone replies to the bot's message
+    elif message.reference:
+        try:
+            replied = await message.channel.fetch_message(message.reference.message_id)
+            if replied.author.id == bot.user.id:
+                should_reply = True
+        except Exception:
+            pass
+
+    if should_reply:
+        await message.reply(
+            "Hello! AI is being set up. This is just a test.",
+            mention_author=False
+        )
+
+    await bot.process_commands(message)
+
+
 
 # =========================================================
 # EVENTS
