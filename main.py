@@ -2266,13 +2266,31 @@ async def on_message(message):
         except Exception:
             pass
 
-    # Temporary AI test
-    if should_reply:
+    # AI Response
+if should_reply:
+    try:
+        prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+
+        if not prompt:
+            prompt = "Hello!"
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+
         await message.reply(
-            "AI is working! (Test successful)",
+            response.text,
             mention_author=False
         )
-        return
+
+    except Exception as e:
+        await message.reply(
+            f"AI Error:\n```{e}```",
+            mention_author=False
+        )
+
+    return
 
     # -----------------------------
     # Your existing level system
