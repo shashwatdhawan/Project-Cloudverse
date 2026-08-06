@@ -2289,7 +2289,7 @@ async def on_message(message):
     # -----------------------------
     # AI Response
     # -----------------------------
-    if should_reply:
+if should_reply:
     try:
         prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
 
