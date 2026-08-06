@@ -26,6 +26,19 @@ except Exception:
     ImageFont = None
     ImageFilter = None
 
+# ======================================
+# AI Knowledge Base
+# ======================================
+
+with open("brain/personality.txt", "r", encoding="utf-8") as f:
+    PERSONALITY = f.read()
+
+with open("brain/server.txt", "r", encoding="utf-8") as f:
+    SERVER_INFO = f.read()
+
+with open("brain/faq.txt", "r", encoding="utf-8") as f:
+    FAQ = f.read()
+
 
 # =========================================================
 # CONFIG
@@ -2276,24 +2289,25 @@ async def on_message(message):
 
             async with message.channel.typing():
                 response = client.chat.completions.create(
-                    model="openai/gpt-oss-120b",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are CloudVerse, the official AI assistant of the "
-                                "CloudVerse Minecraft server. "
-                                "Never say you are Groq or another AI provider. "
-                                "Always introduce yourself as CloudVerse. "
-                                "Be friendly and helpful."
-                            )
-                        },
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ]
-                )
+    model="openai/gpt-oss-120b",
+    messages=[
+        {
+            "role": "system",
+            "content": (
+                PERSONALITY
+                + "\n\n"
+                + SERVER_INFO
+                + "\n\n"
+                + FAQ
+            )
+        },
+        {
+            "role": "user",
+            "content": prompt
+        }
+    ]
+)
+                        
 
             reply = response.choices[0].message.content
 
