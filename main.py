@@ -30,13 +30,13 @@ except Exception:
 # AI Knowledge Base
 # ======================================
 
-with open("brain/personality.txt", "r", encoding="utf-8") as f:
+with open("brain/identity/personality.txt", "r", encoding="utf-8") as f:
     PERSONALITY = f.read()
 
-with open("brain/server.txt", "r", encoding="utf-8") as f:
+with open("brain/identity/server.txt", "r", encoding="utf-8") as f:
     SERVER_INFO = f.read()
 
-with open("brain/faq.txt", "r", encoding="utf-8") as f:
+with open("brain/support/faq.txt", "r", encoding="utf-8") as f:
     FAQ = f.read()
 
 
