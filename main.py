@@ -10,6 +10,7 @@ import time
 import aiohttp
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from google import genai
 
 import discord
 import uvicorn
@@ -31,6 +32,12 @@ except Exception:
 # =========================================================
 
 TOKEN = os.getenv("TOKEN")
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+client = genai.Client(
+    api_key=GEMINI_API_KEY
+)
 
 TRIGGER_FILE = "triggers.json"
 
