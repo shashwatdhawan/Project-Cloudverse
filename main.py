@@ -17,6 +17,7 @@ import uvicorn
 from discord.ext import commands
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
+from collections import defaultdict
 
 try:
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -51,6 +52,14 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = Groq(
     api_key=GROQ_API_KEY
 )
+
+# ======================================
+# AI Conversation Memory
+# ======================================
+
+conversation_history = defaultdict(list)
+
+MAX_HISTORY = 20
 
 TRIGGER_FILE = "triggers.json"
 
@@ -2280,53 +2289,75 @@ async def on_message(message):
     # -----------------------------
     # AI Response
     # -----------------------------
-    if should_reply:
-        try:
-            prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+   if should_reply:
+    try:
+        prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
 
-            if not prompt:
-                prompt = "Hello!"
+        if not prompt:
+            prompt = "Hello!"
 
-            async with message.channel.typing():
-                response = client.chat.completions.create(
-    model="openai/gpt-oss-120b",
-    messages=[
-        {
-            "role": "system",
-            "content": (
-                PERSONALITY
-                + "\n\n"
-                + SERVER_INFO
-                + "\n\n"
-                + FAQ
-            )
-        },
-        {
+        # Get this user's conversation history
+        history = conversation_history[message.author.id]
+
+        # Store the user's latest message
+        history.append({
             "role": "user",
             "content": prompt
-        }
-    ]
-)
-                        
+        })
 
-            reply = response.choices[0].message.content
+        async with message.channel.typing():
 
-            if len(reply) > 1900:
-                reply = reply[:1900] + "\n\n...(response truncated)"
+            # Build the messages list
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        PERSONALITY
+                        + "\n\n"
+                        + SERVER_INFO
+                        + "\n\n"
+                        + FAQ
+                    )
+                }
+            ]
 
-            await message.reply(
-                reply,
-                mention_author=False
+            # Add previous conversation
+            messages.extend(history)
+
+            # Ask Groq
+            response = client.chat.completions.create(
+                model="openai/gpt-oss-120b",
+                messages=messages
             )
 
-        except Exception as e:
-            await message.reply(
-                f"AI Error:\n```{e}```",
-                mention_author=False
-            )
+        reply = response.choices[0].message.content
 
-        return
+        # Save the AI's reply
+        history.append({
+            "role": "assistant",
+            "content": reply
+        })
 
+        # Keep only the last 20 messages
+        if len(history) > MAX_HISTORY:
+            history[:] = history[-MAX_HISTORY:]
+
+        # Discord message limit
+        if len(reply) > 1900:
+            reply = reply[:1900] + "\n\n...(response truncated)"
+
+        await message.reply(
+            reply,
+            mention_author=False
+        )
+
+    except Exception as e:
+        await message.reply(
+            f"AI Error:\n```{e}```",
+            mention_author=False
+        )
+
+    return
     # -----------------------------
     # Your existing level system
     # -----------------------------
