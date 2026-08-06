@@ -2269,30 +2269,7 @@ async def on_message(message):
     # -----------------------------
     # AI Response
     # -----------------------------
-    if should_reply:
-        try:
-            prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
 
-            if not prompt:
-                prompt = "Hello!"
-
-            response = client.models.generate_content(
-                model="gemini-3-flash-preview",
-                contents=prompt
-            )
-
-            await message.reply(
-                response.text,
-                mention_author=False
-            )
-
-        except Exception as e:
-            await message.reply(
-                f"AI Error:\n```{e}```",
-                mention_author=False
-            )
-
-        return
 
     # -----------------------------
     # Your existing level system
