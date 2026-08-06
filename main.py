@@ -2266,31 +2266,33 @@ async def on_message(message):
         except Exception:
             pass
 
+    # -----------------------------
     # AI Response
-if should_reply:
-    try:
-        prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+    # -----------------------------
+    if should_reply:
+        try:
+            prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
 
-        if not prompt:
-            prompt = "Hello!"
+            if not prompt:
+                prompt = "Hello!"
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
 
-        await message.reply(
-            response.text,
-            mention_author=False
-        )
+            await message.reply(
+                response.text,
+                mention_author=False
+            )
 
-    except Exception as e:
-        await message.reply(
-            f"AI Error:\n```{e}```",
-            mention_author=False
-        )
+        except Exception as e:
+            await message.reply(
+                f"AI Error:\n```{e}```",
+                mention_author=False
+            )
 
-    return
+        return
 
     # -----------------------------
     # Your existing level system
