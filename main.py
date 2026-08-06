@@ -2253,11 +2253,9 @@ async def on_message(message):
     # -----------------------------
     should_reply = False
 
-    # If someone mentions the bot
     if bot.user in message.mentions:
         should_reply = True
 
-    # If someone replies to one of the bot's messages
     elif message.reference:
         try:
             replied = await message.channel.fetch_message(message.reference.message_id)
@@ -2266,56 +2264,54 @@ async def on_message(message):
         except Exception:
             pass
 
-# -----------------------------
-# AI Response
-# -----------------------------
-if should_reply:
-    try:
-        prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+    # -----------------------------
+    # AI Response
+    # -----------------------------
+    if should_reply:
+        try:
+            prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
 
-        if not prompt:
-            prompt = "Hello!"
+            if not prompt:
+                prompt = "Hello!"
 
-        async with message.channel.typing():
+            async with message.channel.typing():
+                response = client.chat.completions.create(
+                    model="openai/gpt-oss-120b",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are CloudVerse, the official AI assistant of the "
+                                "CloudVerse Minecraft server. "
+                                "Never say you are Groq or another AI provider. "
+                                "Always introduce yourself as CloudVerse. "
+                                "Be friendly and helpful."
+                            )
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ]
+                )
 
-            response = client.chat.completions.create(
-                model="openai/gpt-oss-120b",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are CloudVerse, the official AI assistant of the "
-                            "CloudVerse Minecraft server. "
-                            "Never say you are Groq or another AI provider. "
-                            "Always introduce yourself as CloudVerse. "
-                            "Be friendly and helpful."
-                        )
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
+            reply = response.choices[0].message.content
+
+            if len(reply) > 1900:
+                reply = reply[:1900] + "\n\n...(response truncated)"
+
+            await message.reply(
+                reply,
+                mention_author=False
             )
 
-        reply = response.choices[0].message.content
+        except Exception as e:
+            await message.reply(
+                f"AI Error:\n```{e}```",
+                mention_author=False
+            )
 
-        if len(reply) > 1900:
-            reply = reply[:1900] + "\n\n...(response truncated)"
-
-        await message.reply(
-            reply,
-            mention_author=False
-        )
-
-    except Exception as e:
-        await message.reply(
-            f"AI Error:\n```{e}```",
-            mention_author=False
-        )
-
-    return
-
+        return
 
     # -----------------------------
     # Your existing level system
