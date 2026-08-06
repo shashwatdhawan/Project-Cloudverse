@@ -2221,11 +2221,7 @@ async def steal(
         )
 
 
-@bot.event
-async def on_message(message):
-    print(f"MESSAGE RECEIVED: {message.author} -> {message.content}")
 
-    await bot.process_commands(message)
 
 
 
@@ -2252,6 +2248,35 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # -----------------------------
+    # AI Trigger
+    # -----------------------------
+    should_reply = False
+
+    # If someone mentions the bot
+    if bot.user in message.mentions:
+        should_reply = True
+
+    # If someone replies to one of the bot's messages
+    elif message.reference:
+        try:
+            replied = await message.channel.fetch_message(message.reference.message_id)
+            if replied.author.id == bot.user.id:
+                should_reply = True
+        except Exception:
+            pass
+
+    # Temporary AI test
+    if should_reply:
+        await message.reply(
+            "AI is working! (Test successful)",
+            mention_author=False
+        )
+        return
+
+    # -----------------------------
+    # Your existing level system
+    # -----------------------------
     await handle_level_message(message)
 
     content = message.content.lower().strip()
