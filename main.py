@@ -2275,9 +2275,11 @@ async def on_message(message):
     # -----------------------------
     should_reply = False
 
+    # If someone mentions the bot
     if bot.user in message.mentions:
         should_reply = True
 
+    # If someone replies to one of the bot's messages
     elif message.reference:
         try:
             replied = await message.channel.fetch_message(message.reference.message_id)
@@ -2289,75 +2291,76 @@ async def on_message(message):
     # -----------------------------
     # AI Response
     # -----------------------------
-if should_reply:
-    try:
-        prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+    if should_reply:
+        try:
+            prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
 
-        if not prompt:
-            prompt = "Hello!"
+            if not prompt:
+                prompt = "Hello!"
 
-        # Get this user's conversation history
-        history = conversation_history[message.author.id]
+            # Get this user's conversation history
+            history = conversation_history[message.author.id]
 
-        # Store the user's latest message
-        history.append({
-            "role": "user",
-            "content": prompt
-        })
+            # Store the user's latest message
+            history.append({
+                "role": "user",
+                "content": prompt
+            })
 
-        async with message.channel.typing():
+            async with message.channel.typing():
 
-            # Build the messages list
-            messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        PERSONALITY
-                        + "\n\n"
-                        + SERVER_INFO
-                        + "\n\n"
-                        + FAQ
-                    )
-                }
-            ]
+                # Build the messages list
+                messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            PERSONALITY
+                            + "\n\n"
+                            + SERVER_INFO
+                            + "\n\n"
+                            + FAQ
+                        )
+                    }
+                ]
 
-            # Add previous conversation
-            messages.extend(history)
+                # Add previous conversation
+                messages.extend(history)
 
-            # Ask Groq
-            response = client.chat.completions.create(
-                model="openai/gpt-oss-120b",
-                messages=messages
+                # Ask Groq
+                response = client.chat.completions.create(
+                    model="openai/gpt-oss-120b",
+                    messages=messages
+                )
+
+            reply = response.choices[0].message.content
+
+            # Save AI reply
+            history.append({
+                "role": "assistant",
+                "content": reply
+            })
+
+            # Keep only last 20 messages
+            if len(history) > MAX_HISTORY:
+                history[:] = history[-MAX_HISTORY:]
+
+            # Discord limit
+            if len(reply) > 1900:
+                reply = reply[:1900] + "\n\n...(response truncated)"
+
+            await message.reply(
+                reply,
+                mention_author=False
             )
 
-        reply = response.choices[0].message.content
+        except Exception as e:
+            await message.reply(
+                f"AI Error:\n```{e}```",
+                mention_author=False
+            )
 
-        # Save the AI's reply
-        history.append({
-            "role": "assistant",
-            "content": reply
-        })
+        return
 
-        # Keep only the last 20 messages
-        if len(history) > MAX_HISTORY:
-            history[:] = history[-MAX_HISTORY:]
-
-        # Discord message limit
-        if len(reply) > 1900:
-            reply = reply[:1900] + "\n\n...(response truncated)"
-
-        await message.reply(
-            reply,
-            mention_author=False
-        )
-
-    except Exception as e:
-        await message.reply(
-            f"AI Error:\n```{e}```",
-            mention_author=False
-        )
-
-    return
     # -----------------------------
     # Your existing level system
     # -----------------------------
@@ -2381,7 +2384,6 @@ if should_reply:
         )
 
     await bot.process_commands(message)
-
 
 @bot.event
 async def on_voice_state_update(member, before, after):
