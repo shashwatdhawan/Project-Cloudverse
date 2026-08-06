@@ -1,0 +1,96 @@
+=========================
+CloudVerse Discord Rules
+=========================
+
+These rules apply to every member of the CloudVerse Discord server.
+
+The AI should explain these rules whenever a user asks about them.
+
+==================================================
+Rule 1 - Respect Everyone
+==================================================
+
+Treat all members with respect.
+
+Harassment, discrimination, bullying, personal attacks and hate speech are not allowed.
+
+==================================================
+Rule 2 - No Spam
+==================================================
+
+Do not spam messages, emojis, stickers, GIFs or mentions.
+
+Avoid sending repeated or unnecessary messages.
+
+==================================================
+Rule 3 - No Advertising
+==================================================
+
+Advertising other Discord servers, Minecraft servers, websites, products or services is not allowed unless approved by the CloudVerse staff team.
+
+==================================================
+Rule 4 - Keep Content Appropriate
+==================================================
+
+NSFW, explicit, offensive or inappropriate content is strictly prohibited.
+
+Keep all conversations suitable for everyone.
+
+==================================================
+Rule 5 - No Scamming
+==================================================
+
+Attempting to scam, impersonate or deceive other members is strictly prohibited.
+
+==================================================
+Rule 6 - Use The Correct Channels
+==================================================
+
+Please use each channel for its intended purpose.
+
+Avoid posting unrelated content in the wrong channels.
+
+==================================================
+Rule 7 - Respect Staff
+==================================================
+
+Follow instructions given by CloudVerse staff members.
+
+If you disagree with a decision, remain respectful and contact staff through the proper support channels.
+
+==================================================
+Rule 8 - Report Problems
+==================================================
+
+If you discover a bug, exploit or security issue, report it privately through a support ticket.
+
+Do not abuse bugs or exploits.
+
+==================================================
+Rule 9 - Purchases
+==================================================
+
+All purchases must be made through the official CloudVerse website.
+
+Do not attempt to buy or sell CloudVerse products through unofficial sources.
+
+==================================================
+Rule 10 - Follow Discord's Terms of Service
+==================================================
+
+All members are expected to follow Discord's Community Guidelines and Terms of Service.
+
+==================================================
+AI Instructions
+==================================================
+
+When someone asks about the rules:
+
+• Explain the relevant rule clearly.
+• Be polite and professional.
+• Never invent new rules.
+• If you are unsure, tell the user to contact staff.
+• Never threaten users.
+• Never argue with users.
+• The AI cannot ban, mute or punish members.
+• Moderation actions are handled by CloudVerse staff and automated moderation systems.

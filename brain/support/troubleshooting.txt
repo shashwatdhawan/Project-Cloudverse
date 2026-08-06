@@ -1,0 +1,165 @@
+=========================
+CloudVerse Troubleshooting Guide
+=========================
+
+This file helps the AI assist players with common problems before directing them to support.
+
+The AI should always try to solve simple issues first.
+
+If the issue cannot be solved, politely direct the user to create or continue their Discord support ticket.
+
+Official Discord:
+https://discord.gg/ZduZMYP6Cc
+
+==================================================
+Website Problems
+==================================================
+
+Problem:
+I can't access the website.
+
+Solution:
+
+• Check your internet connection.
+• Refresh the page.
+• Try another browser.
+• Clear your browser cache.
+• Try again after a few minutes.
+
+If the problem continues, create a General Support ticket.
+
+--------------------------------------------------
+
+Problem:
+The website isn't loading correctly.
+
+Solution:
+
+• Refresh the page.
+• Disable browser extensions temporarily.
+• Try Incognito/Private mode.
+• Try another browser.
+
+If the issue continues, contact support.
+
+==================================================
+Purchase Problems
+==================================================
+
+Problem:
+I can't complete checkout.
+
+Solution:
+
+• Make sure all required information is filled in.
+• Check your payment details.
+• Try refreshing the page.
+• Try again later.
+
+If the problem continues, contact support.
+
+--------------------------------------------------
+
+Problem:
+My Discord ticket wasn't created.
+
+Solution:
+
+• Wait a few minutes.
+• Make sure your Discord account is connected correctly.
+• If no ticket appears, create a General Support ticket and explain the issue.
+
+==================================================
+Payment Problems
+==================================================
+
+Problem:
+My payment is still pending.
+
+Solution:
+
+• Wait a few minutes.
+• Some payment methods may take longer to process.
+• If the payment remains pending, continue your Purchase Support ticket.
+
+--------------------------------------------------
+
+Problem:
+I accidentally paid twice.
+
+Solution:
+
+Do not make assumptions.
+
+Tell the customer to continue their Purchase Support ticket so staff can investigate.
+
+==================================================
+Minecraft Problems
+==================================================
+
+Problem:
+I can't join the server.
+
+Solution:
+
+• Make sure you're using Minecraft Java Edition.
+• Make sure you're using version 1.21.11.
+• Check your internet connection.
+• Verify that the server is online.
+
+If the problem continues, contact support.
+
+--------------------------------------------------
+
+Problem:
+I'm experiencing lag.
+
+Solution:
+
+• Check your internet connection.
+• Restart Minecraft.
+• Reduce your video settings.
+• Close unnecessary applications.
+
+If the issue continues, create a General Support ticket.
+
+==================================================
+Discord Problems
+==================================================
+
+Problem:
+I can't see channels.
+
+Solution:
+
+• Make sure you've completed any required verification.
+• Rejoin the server if necessary.
+• Contact staff if the issue continues.
+
+--------------------------------------------------
+
+Problem:
+I cannot create a ticket.
+
+Solution:
+
+• Make sure you have access to the Support section.
+• Try refreshing Discord.
+• Restart Discord if necessary.
+• If the issue continues, contact a staff member.
+
+==================================================
+AI Rules
+==================================================
+
+Always stay calm and helpful.
+
+Never invent solutions.
+
+Never guess.
+
+If troubleshooting does not solve the problem, politely direct the user to the appropriate Discord support ticket.
+
+Never promise that an issue will be fixed immediately.
+
+Never claim a bug has been fixed unless confirmed by staff.
