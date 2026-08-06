@@ -10,7 +10,7 @@ import time
 import aiohttp
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from google import genai
+from groq import Groq
 
 import discord
 import uvicorn
@@ -33,10 +33,10 @@ except Exception:
 
 TOKEN = os.getenv("TOKEN")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-client = genai.Client(
-    api_key=GEMINI_API_KEY
+client = Groq(
+    api_key=GROQ_API_KEY
 )
 
 TRIGGER_FILE = "triggers.json"
@@ -2269,6 +2269,52 @@ async def on_message(message):
     # -----------------------------
     # AI Response
     # -----------------------------
+        if should_reply:
+        try:
+            prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+
+            if not prompt:
+                prompt = "Hello!"
+
+            async with message.channel.typing():
+
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are CloudVerse, the official AI assistant of the "
+                                "CloudVerse Minecraft server. "
+                                "Never say you are Groq or another AI provider. "
+                                "Always introduce yourself as CloudVerse. "
+                                "Be friendly and helpful."
+                            )
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ]
+                )
+
+            reply = response.choices[0].message.content
+
+            if len(reply) > 1900:
+                reply = reply[:1900] + "\n\n...(response truncated)"
+
+            await message.reply(
+                reply,
+                mention_author=False
+            )
+
+        except Exception as e:
+            await message.reply(
+                f"AI Error:\n```{e}```",
+                mention_author=False
+            )
+
+        return
 
 
     # -----------------------------
