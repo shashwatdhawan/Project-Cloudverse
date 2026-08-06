@@ -2266,55 +2266,55 @@ async def on_message(message):
         except Exception:
             pass
 
-    # -----------------------------
-    # AI Response
-    # -----------------------------
-        if should_reply:
-        try:
-            prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+# -----------------------------
+# AI Response
+# -----------------------------
+if should_reply:
+    try:
+        prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
 
-            if not prompt:
-                prompt = "Hello!"
+        if not prompt:
+            prompt = "Hello!"
 
-            async with message.channel.typing():
+        async with message.channel.typing():
 
-                response = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are CloudVerse, the official AI assistant of the "
-                                "CloudVerse Minecraft server. "
-                                "Never say you are Groq or another AI provider. "
-                                "Always introduce yourself as CloudVerse. "
-                                "Be friendly and helpful."
-                            )
-                        },
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ]
-                )
-
-            reply = response.choices[0].message.content
-
-            if len(reply) > 1900:
-                reply = reply[:1900] + "\n\n...(response truncated)"
-
-            await message.reply(
-                reply,
-                mention_author=False
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are CloudVerse, the official AI assistant of the "
+                            "CloudVerse Minecraft server. "
+                            "Never say you are Groq or another AI provider. "
+                            "Always introduce yourself as CloudVerse. "
+                            "Be friendly and helpful."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
             )
 
-        except Exception as e:
-            await message.reply(
-                f"AI Error:\n```{e}```",
-                mention_author=False
-            )
+        reply = response.choices[0].message.content
 
-        return
+        if len(reply) > 1900:
+            reply = reply[:1900] + "\n\n...(response truncated)"
+
+        await message.reply(
+            reply,
+            mention_author=False
+        )
+
+    except Exception as e:
+        await message.reply(
+            f"AI Error:\n```{e}```",
+            mention_author=False
+        )
+
+    return
 
 
     # -----------------------------
