@@ -73,119 +73,7 @@ def save_triggers():
     with open(TRIGGER_FILE, "w") as f:
         json.dump(triggers, f, indent=4)
 
-# ======================================
-# Temporary AI Memory
-# ======================================
 
-TEMP_AI_MEMORY = ""
-
-
-@bot.command(name="memory")
-async def memory_command(ctx, action=None, *, text=None):
-
-    # Admin only
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send(
-            "❌ You need Administrator permission to use this command.",
-            delete_after=5
-        )
-        return
-
-    global TEMP_AI_MEMORY
-
-    # Show help
-    if not action:
-        await ctx.send(
-            "**CloudVerse AI Memory Commands**\n\n"
-            "`,memory add <text>` - Add temporary memory\n"
-            "`,memory remove <text>` - Remove text from memory\n"
-            "`,memory view` - View current memory\n"
-            "`,memory clear` - Clear all temporary memory"
-        )
-        return
-
-    action = action.lower()
-
-    # -------------------------------
-    # ADD
-    # -------------------------------
-
-    if action == "add":
-
-        if not text:
-            await ctx.send("❌ Please provide the memory to add.")
-            return
-
-        if TEMP_AI_MEMORY:
-            TEMP_AI_MEMORY += "\n" + text
-        else:
-            TEMP_AI_MEMORY = text
-
-        await ctx.send(
-            f"🧠 **Temporary AI memory added:**\n```text\n{text}\n```"
-        )
-
-    # -------------------------------
-    # REMOVE
-    # -------------------------------
-
-    elif action == "remove":
-
-        if not text:
-            await ctx.send("❌ Please provide the text to remove.")
-            return
-
-        old_memory = TEMP_AI_MEMORY
-
-        lines = TEMP_AI_MEMORY.splitlines()
-
-        TEMP_AI_MEMORY = "\n".join(
-            line for line in lines
-            if text.lower() not in line.lower()
-        )
-
-        if old_memory == TEMP_AI_MEMORY:
-            await ctx.send("❌ That memory was not found.")
-        else:
-            await ctx.send(
-                f"🗑️ **Temporary AI memory removed:**\n```text\n{text}\n```"
-            )
-
-    # -------------------------------
-    # VIEW
-    # -------------------------------
-
-    elif action == "view":
-
-        if not TEMP_AI_MEMORY:
-            await ctx.send("🧠 Temporary AI memory is currently empty.")
-            return
-
-        await ctx.send(
-            f"🧠 **Current Temporary AI Memory:**\n```text\n{TEMP_AI_MEMORY}\n```"
-        )
-
-    # -------------------------------
-    # CLEAR
-    # -------------------------------
-
-    elif action == "clear":
-
-        TEMP_AI_MEMORY = ""
-
-        await ctx.send(
-            "🗑️ **All temporary AI memory has been cleared.**"
-        )
-
-    else:
-        await ctx.send(
-            "❌ Unknown action.\n\n"
-            "Use:\n"
-            "`,memory add <text>`\n"
-            "`,memory remove <text>`\n"
-            "`,memory view`\n"
-            "`,memory clear`"
-        )
 
 # You can hardcode normal Discord IDs safely.
 # Keep TOKEN and WEBSITE_TICKET_SECRET in Railway Variables.
@@ -263,6 +151,160 @@ bot = commands.Bot(
     intents=intents,
     help_command=None,
 )
+
+# ======================================
+# TEMPORARY AI MEMORY
+# ======================================
+
+TEMP_AI_MEMORY = ""
+
+
+@bot.command(name="memory")
+async def memory_command(ctx, action=None, *, text=None):
+
+    # Admin only
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send(
+            "❌ You need Administrator permission to use this command.",
+            delete_after=5
+        )
+        return
+
+    global TEMP_AI_MEMORY
+
+    # ==================================
+    # HELP
+    # ==================================
+
+    if not action:
+        await ctx.send(
+            "**☁️ CloudVerse AI Memory Commands**\n\n"
+            "`,memory add <text>` — Add temporary memory\n"
+            "`,memory remove <text>` — Remove temporary memory\n"
+            "`,memory view` — View current temporary memory\n"
+            "`,memory clear` — Clear all temporary memory"
+        )
+        return
+
+    action = action.lower().strip()
+
+    # ==================================
+    # ADD MEMORY
+    # ==================================
+
+    if action == "add":
+
+        if not text:
+            await ctx.send(
+                "❌ Please provide the memory you want to add.\n\n"
+                "**Example:**\n"
+                "`,memory add CloudVerse website is currently under maintenance.`"
+            )
+            return
+
+        text = text.strip()
+
+        if TEMP_AI_MEMORY:
+            TEMP_AI_MEMORY += "\n" + text
+        else:
+            TEMP_AI_MEMORY = text
+
+        await ctx.send(
+            "🧠 **Temporary AI memory added!**\n\n"
+            f"```text\n{text}\n```"
+        )
+
+    # ==================================
+    # REMOVE MEMORY
+    # ==================================
+
+    elif action == "remove":
+
+        if not text:
+            await ctx.send(
+                "❌ Please provide the memory text you want to remove.\n\n"
+                "**Example:**\n"
+                "`,memory remove CloudVerse website is currently under maintenance.`"
+            )
+            return
+
+        text = text.strip()
+
+        if not TEMP_AI_MEMORY:
+            await ctx.send(
+                "🧠 Temporary AI memory is already empty."
+            )
+            return
+
+        old_memory = TEMP_AI_MEMORY
+
+        lines = TEMP_AI_MEMORY.splitlines()
+
+        TEMP_AI_MEMORY = "\n".join(
+            line
+            for line in lines
+            if text.lower() not in line.lower()
+        )
+
+        if old_memory == TEMP_AI_MEMORY:
+            await ctx.send(
+                "❌ I couldn't find that memory."
+            )
+        else:
+            await ctx.send(
+                "🗑️ **Temporary AI memory removed!**\n\n"
+                f"```text\n{text}\n```"
+            )
+
+    # ==================================
+    # VIEW MEMORY
+    # ==================================
+
+    elif action == "view":
+
+        if not TEMP_AI_MEMORY:
+            await ctx.send(
+                "🧠 **Temporary AI memory is empty.**"
+            )
+            return
+
+        memory_text = TEMP_AI_MEMORY
+
+        # Discord message limit protection
+        if len(memory_text) > 1900:
+            memory_text = memory_text[:1900] + "\n..."
+
+        await ctx.send(
+            "🧠 **Current CloudVerse AI Memory:**\n\n"
+            f"```text\n{memory_text}\n```"
+        )
+
+    # ==================================
+    # CLEAR MEMORY
+    # ==================================
+
+    elif action == "clear":
+
+        TEMP_AI_MEMORY = ""
+
+        await ctx.send(
+            "🗑️ **All temporary AI memory has been cleared.**"
+        )
+
+    # ==================================
+    # INVALID ACTION
+    # ==================================
+
+    else:
+
+        await ctx.send(
+            "❌ **Unknown memory action.**\n\n"
+            "Use:\n"
+            "`,memory add <text>`\n"
+            "`,memory remove <text>`\n"
+            "`,memory view`\n"
+            "`,memory clear`"
+        )
 
 trigger = bot.create_group(
     "trigger",
