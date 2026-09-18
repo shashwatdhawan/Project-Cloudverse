@@ -73,6 +73,120 @@ def save_triggers():
     with open(TRIGGER_FILE, "w") as f:
         json.dump(triggers, f, indent=4)
 
+# ======================================
+# Temporary AI Memory
+# ======================================
+
+TEMP_AI_MEMORY = ""
+
+
+@bot.command(name="memory")
+async def memory_command(ctx, action=None, *, text=None):
+
+    # Admin only
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send(
+            "❌ You need Administrator permission to use this command.",
+            delete_after=5
+        )
+        return
+
+    global TEMP_AI_MEMORY
+
+    # Show help
+    if not action:
+        await ctx.send(
+            "**CloudVerse AI Memory Commands**\n\n"
+            "`,memory add <text>` - Add temporary memory\n"
+            "`,memory remove <text>` - Remove text from memory\n"
+            "`,memory view` - View current memory\n"
+            "`,memory clear` - Clear all temporary memory"
+        )
+        return
+
+    action = action.lower()
+
+    # -------------------------------
+    # ADD
+    # -------------------------------
+
+    if action == "add":
+
+        if not text:
+            await ctx.send("❌ Please provide the memory to add.")
+            return
+
+        if TEMP_AI_MEMORY:
+            TEMP_AI_MEMORY += "\n" + text
+        else:
+            TEMP_AI_MEMORY = text
+
+        await ctx.send(
+            f"🧠 **Temporary AI memory added:**\n```text\n{text}\n```"
+        )
+
+    # -------------------------------
+    # REMOVE
+    # -------------------------------
+
+    elif action == "remove":
+
+        if not text:
+            await ctx.send("❌ Please provide the text to remove.")
+            return
+
+        old_memory = TEMP_AI_MEMORY
+
+        lines = TEMP_AI_MEMORY.splitlines()
+
+        TEMP_AI_MEMORY = "\n".join(
+            line for line in lines
+            if text.lower() not in line.lower()
+        )
+
+        if old_memory == TEMP_AI_MEMORY:
+            await ctx.send("❌ That memory was not found.")
+        else:
+            await ctx.send(
+                f"🗑️ **Temporary AI memory removed:**\n```text\n{text}\n```"
+            )
+
+    # -------------------------------
+    # VIEW
+    # -------------------------------
+
+    elif action == "view":
+
+        if not TEMP_AI_MEMORY:
+            await ctx.send("🧠 Temporary AI memory is currently empty.")
+            return
+
+        await ctx.send(
+            f"🧠 **Current Temporary AI Memory:**\n```text\n{TEMP_AI_MEMORY}\n```"
+        )
+
+    # -------------------------------
+    # CLEAR
+    # -------------------------------
+
+    elif action == "clear":
+
+        TEMP_AI_MEMORY = ""
+
+        await ctx.send(
+            "🗑️ **All temporary AI memory has been cleared.**"
+        )
+
+    else:
+        await ctx.send(
+            "❌ Unknown action.\n\n"
+            "Use:\n"
+            "`,memory add <text>`\n"
+            "`,memory remove <text>`\n"
+            "`,memory view`\n"
+            "`,memory clear`"
+        )
+
 # You can hardcode normal Discord IDs safely.
 # Keep TOKEN and WEBSITE_TICKET_SECRET in Railway Variables.
 GUILD_ID = 1502695100902277171
@@ -2311,18 +2425,20 @@ async def on_message(message):
 
                 # Build the messages list
                 messages = [
-                    {
-                        "role": "system",
-                        "content": (
-                            PERSONALITY
-                            + "\n\n"
-                            + SERVER_INFO
-                            + "\n\n"
-                            + FAQ
-                        )
-                    }
-                ]
-
+    {
+        "role": "system",
+        "content": (
+            PERSONALITY
+            + "\n\n"
+            + SERVER_INFO
+            + "\n\n"
+            + FAQ
+            + "\n\n"
+            + "TEMPORARY AI MEMORY:\n"
+            + (TEMP_AI_MEMORY if TEMP_AI_MEMORY else "No temporary memory currently set.")
+        )
+    }
+]
                 # Add previous conversation
                 messages.extend(history)
 
